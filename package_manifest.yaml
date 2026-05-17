@@ -1,0 +1,57 @@
+# Static-TF "description" primitive for the AgileX Ranger Mini.
+#
+# Stand-in for `system.soma` (URDF + robot_state_publisher), which is
+# on the v0.2 robonix roadmap but not yet shipped. Until soma lands,
+# the deploy needs SOMETHING to publish the static edges from
+# `base_link` down to each sensor mount frame, otherwise rtabmap's
+# RGBD path silently fails TF lookups and nav goals land in the wrong
+# place.
+#
+# This package's only job is to spawn `static_transform_publisher`
+# nodes (via a tiny ros2 launch file we vendor in `launch/`) at
+# Driver(CMD_INIT) time, and tear them down on shutdown. There is NO
+# native build step — `scripts/build.sh` is a no-op marker (just
+# `rbnx codegen` so the framework's stub for the driver capability
+# gets generated).
+#
+# Capability surface (mode = abstract pattern, transport = wire):
+#   primitive/tf/driver  mode=rpc  transport=gRPC  (auto-declared by framework)
+#
+# Notably we do NOT atlas-declare `/tf_static` as a topic_out
+# capability: TF is a global side-channel in ROS 2 (every node with
+# tf2_ros joins the same /tf + /tf_static graph automatically), so
+# routing it through atlas would just add a layer of indirection
+# without actually changing the wiring.
+#
+# Frame contract (must match the rest of the deploy):
+#
+#   base_link              chassis frame; owned by ranger_chassis_rbnx
+#                          (publish_odom_tf: true → odom → base_link)
+#   livox_frame            MID-360 mount; published HERE
+#                          (Livox driver tags PointCloud2 with this id)
+#   camera_435i_link       RealSense D435i body mount; published HERE
+#                          (note `camera_435i` prefix matches the deploy's
+#                          camera_name, NOT the bare `camera_link`)
+#
+# When soma ships, drop this package from the deploy manifest and
+# point system.soma.urdf_path at the proper URDF — this whole package
+# becomes a no-op and can be removed from the cache.
+#
+# Config (passed via `Driver(CMD_INIT, config_json)`):
+#   launch_file        default "launch/static_tf.launch.xml" (relative to package root)
+#   launch_args        dict, optional; forwarded as `<key>:=<value>` ros2 launch args
+#                      (e.g. {"lidar_x": "0.18", "lidar_z": "0.42"})
+manifestVersion: 1
+
+package:
+  name: com.robonix.ranger.ranger_description
+  version: 0.1.0
+  vendor: robonix
+  description: Static TF stand-in for the Ranger Mini until system.soma ships.
+  license: MulanPSL-2.0
+
+build: bash scripts/build.sh
+start: bash scripts/start.sh
+
+capabilities:
+  - name: robonix/primitive/tf/driver

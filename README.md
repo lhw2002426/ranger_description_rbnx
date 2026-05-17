@@ -9,10 +9,10 @@ It exists as a **stand-in for `system.soma`** (URDF + robot_state_publisher), wh
 
 ## What this package is (and isn't)
 
-- ✔ A `ros2 launch <pkg>/launch/static_tf.launch.xml` invocation supervised by rbnx boot.
-- ✘ Not a Python atlas_bridge. There's no `Driver(CMD_INIT)` handler, no `@on_init`, no `@on_activate`. `start.sh` just `exec`s `ros2 launch` and lets the launch tree be its sole process.
-- ✘ Not an atlas-routed capability. `capabilities: []` in `package_manifest.yaml`. TF is already a ROS 2 global side-channel (every tf2-aware node joins `/tf` + `/tf_static` automatically), so atlas-routing it would only add indirection. rbnx boot registers the package on atlas with state ACTIVE the moment `start.sh` spawns and skips the Driver(CMD_INIT) handshake.
-- ✘ Not a build target. `build.sh` is a no-op (just writes the `.rbnx-built` stamp so rbnx boot's "needs build" heuristic stays happy). No codegen, no protoc, no native compile.
+- ✔ A `ros2 launch <pkg>/launch/static_tf.launch.xml` invocation supervised by rbnx boot, with a tiny Python adapter (~80 lines) that does one `RegisterPrimitive` RPC + a heartbeat loop so atlas knows we exist.
+- ✘ Not a Python atlas_bridge. There's no `Driver(CMD_INIT)` handler, no `@on_init`, no `@on_activate`. The Python wrapper exists ONLY to register on atlas + run ros2 launch as a child process; it doesn't speak the lifecycle protocol.
+- ✘ Not an atlas-routed capability. `capabilities: []` in `package_manifest.yaml`. TF is already a ROS 2 global side-channel (every tf2-aware node joins `/tf` + `/tf_static` automatically), so atlas-routing it would only add indirection. With no `*/driver` capability, rbnx boot's `spawn_and_init` walks `wait_for_registration` → finds `driver_contract=None` → marks the package ACTIVE without trying to drive INIT/ACTIVATE (see `deploy.rs:1247-1253`).
+- ✘ Not pure no-op build. `build.sh` runs `rbnx codegen` so the start script can `import atlas_pb2` (one RPC: `RegisterPrimitive`). No native compile, no protoc plumbing beyond what rbnx codegen already does.
 
 ## Frame contract (must match the rest of the deploy)
 
@@ -29,12 +29,13 @@ It exists as a **stand-in for `system.soma`** (URDF + robot_state_publisher), wh
 
 ```
 ranger_description_rbnx/
-├── package_manifest.yaml        capabilities: [] (intentional)
+├── package_manifest.yaml                 capabilities: [] (intentional)
 ├── launch/
-│   └── static_tf.launch.xml     two static_transform_publisher nodes
+│   └── static_tf.launch.xml              two static_transform_publisher nodes
 └── scripts/
-    ├── build.sh                 no-op (writes .rbnx-built stamp)
-    └── start.sh                 exec ros2 launch …/static_tf.launch.xml
+    ├── build.sh                          rbnx codegen → atlas_pb2 stubs
+    ├── start.sh                          source ROS, set PYTHONPATH, exec the .py below
+    └── atlas_register_and_launch.py      Register + heartbeat + spawn ros2 launch
 ```
 
 ## Configuration — edit the launch file directly

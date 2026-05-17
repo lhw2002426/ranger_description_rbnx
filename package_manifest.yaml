@@ -1,4 +1,4 @@
-# Static-TF "description" primitive for the AgileX Ranger Mini.
+# Static-TF "description" wrapper for the AgileX Ranger Mini.
 #
 # Stand-in for `system.soma` (URDF + robot_state_publisher), which is
 # on the v0.2 robonix roadmap but not yet shipped. Until soma lands,
@@ -7,40 +7,27 @@
 # RGBD path silently fails TF lookups and nav goals land in the wrong
 # place.
 #
-# This package's only job is to spawn `static_transform_publisher`
-# nodes (via a tiny ros2 launch file we vendor in `launch/`) at
-# Driver(CMD_INIT) time, and tear them down on shutdown. There is NO
-# native build step — `scripts/build.sh` is a no-op marker (just
-# `rbnx codegen` so the framework's stub for the driver capability
-# gets generated).
+# This package is the smallest possible robonix wrapper around a
+# `ros2 launch`: build is a no-op, start `exec`s ros2 launch directly,
+# no Python module, no atlas_bridge, no `*/driver` capability, no
+# Driver(CMD_INIT) handshake.
 #
-# Capability surface (mode = abstract pattern, transport = wire):
-#   primitive/tf/driver  mode=rpc  transport=gRPC  (auto-declared by framework)
+# Why no capabilities? TF in ROS 2 is a global side-channel —
+# every tf2-aware node joins /tf + /tf_static automatically — so
+# atlas-routing it would be pure indirection. The deploy-manifest
+# entry exists so rbnx boot owns the launch process's lifetime
+# (SIGTERM teardown follows the same path as every other package),
+# not because we need atlas-side service discovery for TF.
 #
-# Notably we do NOT atlas-declare `/tf_static` as a topic_out
-# capability: TF is a global side-channel in ROS 2 (every node with
-# tf2_ros joins the same /tf + /tf_static graph automatically), so
-# routing it through atlas would just add a layer of indirection
-# without actually changing the wiring.
-#
-# Frame contract (must match the rest of the deploy):
-#
-#   base_link              chassis frame; owned by ranger_chassis_rbnx
-#                          (publish_odom_tf: true → odom → base_link)
-#   livox_frame            MID-360 mount; published HERE
-#                          (Livox driver tags PointCloud2 with this id)
-#   camera_435i_link       RealSense D435i body mount; published HERE
-#                          (note `camera_435i` prefix matches the deploy's
-#                          camera_name, NOT the bare `camera_link`)
+# An empty `capabilities:` list means rbnx boot registers the
+# package on atlas with state ACTIVE the moment it spawns and
+# skips the Driver(CMD_INIT) handshake entirely (see
+# robonix_api/lifecycle.py:128-137 — "no <ns>/driver contract —
+# skipping lifecycle servicer").
 #
 # When soma ships, drop this package from the deploy manifest and
-# point system.soma.urdf_path at the proper URDF — this whole package
-# becomes a no-op and can be removed from the cache.
-#
-# Config (passed via `Driver(CMD_INIT, config_json)`):
-#   launch_file        default "launch/static_tf.launch.xml" (relative to package root)
-#   launch_args        dict, optional; forwarded as `<key>:=<value>` ros2 launch args
-#                      (e.g. {"lidar_x": "0.18", "lidar_z": "0.42"})
+# point system.soma.urdf_path at the proper URDF — this whole
+# package becomes a no-op and can be removed from the cache.
 manifestVersion: 1
 
 package:
@@ -53,5 +40,6 @@ package:
 build: bash scripts/build.sh
 start: bash scripts/start.sh
 
-capabilities:
-  - name: robonix/primitive/tf/driver
+# No `*/driver` (no Driver(CMD_INIT) handler in start.sh) and no other
+# routed contracts (TF is global side-channel — see file header).
+capabilities: []

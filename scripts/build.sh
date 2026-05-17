@@ -1,29 +1,23 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MulanPSL-2.0
 #
-# Build phase: rbnx codegen ONLY. This package vendors no source —
-# the only "artifact" it ships is `launch/static_tf.launch.xml`, which
-# is consumed at runtime by `ros2 launch` and needs no compilation.
+# Build phase: NO-OP. This package is a `ros2 launch` wrapper — there
+# is no Python module to import codegen output into, no native code
+# to compile, no `*/driver` capability to register on atlas. The
+# whole job at runtime is `exec ros2 launch launch/static_tf.launch.xml`,
+# which only needs the .launch.xml file already on disk.
 #
-# We still call `rbnx codegen` so the framework can generate the
-# auto-declared driver capability stub (the `*/driver` gRPC server is
-# what `Driver(CMD_INIT)` lands on; without codegen the start.sh
-# bridge has nothing to import).
+# We still write the rbnx-build/.rbnx-built stamp so `rbnx boot`'s
+# inline-build heuristic (deploy.rs's `needs_build` set) considers
+# this package "built" and doesn't try to re-run build.sh on every
+# boot.
+
 set -euo pipefail
+
 PKG="${RBNX_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$PKG"
-CLEAN="${RBNX_BUILD_CLEAN:-}"
 
-if [[ "$CLEAN" == "1" ]]; then
-    echo "[ranger_description/build] clean: removing rbnx-build/"
-    rm -rf rbnx-build
-fi
-mkdir -p rbnx-build/data
+mkdir -p "$PKG/rbnx-build"
+touch    "$PKG/rbnx-build/.rbnx-built"
 
-FLAGS=(--out-dir "$PKG/rbnx-build/codegen")
-[[ "$CLEAN" == "1" ]] && FLAGS+=(--clean)
-echo "[ranger_description/build] rbnx codegen ${FLAGS[*]}"
-rbnx codegen -p "$PKG" "${FLAGS[@]}"
-
-touch "$PKG/rbnx-build/.rbnx-built"
-echo "[ranger_description/build] done (no native build step — pure launch wrapper)."
+echo "[ranger_description/build] no-op (pure ros2 launch wrapper)."

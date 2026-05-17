@@ -1,19 +1,18 @@
 # ranger_description_rbnx
 
-Robonix package owning the `primitive/tf/*` namespace for the AgileX Ranger Mini. It is a thin wrapper around a tiny `ros2 launch` file that brings up two `static_transform_publisher` nodes:
+A minimal robonix wrapper around a single `ros2 launch` file. Spawns two `static_transform_publisher` nodes:
 
 - `base_link → livox_frame`        — MID-360 mount
 - `base_link → camera_435i_link`   — RealSense D435i body mount
 
 It exists as a **stand-in for `system.soma`** (URDF + robot_state_publisher), which is on the v0.2 robonix roadmap but not yet shipped. When soma lands, drop this package from the deploy manifest and point `system.soma.urdf_path` at the proper URDF — this whole package becomes a no-op and can be removed.
 
-## Capability surface
+## What this package is (and isn't)
 
-| Contract                      | Mode | Transport | Source / handler                            |
-| ----------------------------- | ---- | --------- | ------------------------------------------- |
-| `robonix/primitive/tf/driver` | rpc  | gRPC      | `Driver(CMD_INIT, config_json)` — lifecycle |
-
-We deliberately do **not** atlas-declare `/tf_static` as a topic_out capability. TF is a global side-channel in ROS 2 (every node with `tf2_ros` joins the same `/tf` + `/tf_static` graph automatically), so routing it through atlas would only add indirection without changing the wiring.
+- ✔ A `ros2 launch <pkg>/launch/static_tf.launch.xml` invocation supervised by rbnx boot.
+- ✘ Not a Python atlas_bridge. There's no `Driver(CMD_INIT)` handler, no `@on_init`, no `@on_activate`. `start.sh` just `exec`s `ros2 launch` and lets the launch tree be its sole process.
+- ✘ Not an atlas-routed capability. `capabilities: []` in `package_manifest.yaml`. TF is already a ROS 2 global side-channel (every tf2-aware node joins `/tf` + `/tf_static` automatically), so atlas-routing it would only add indirection. rbnx boot registers the package on atlas with state ACTIVE the moment `start.sh` spawns and skips the Driver(CMD_INIT) handshake.
+- ✘ Not a build target. `build.sh` is a no-op (just writes the `.rbnx-built` stamp so rbnx boot's "needs build" heuristic stays happy). No codegen, no protoc, no native compile.
 
 ## Frame contract (must match the rest of the deploy)
 
@@ -26,58 +25,44 @@ We deliberately do **not** atlas-declare `/tf_static` as a topic_out capability.
 
 `map → odom` is owned by rtabmap (`mapping_rbnx`); this package does not republish it.
 
-## Driver-init lifecycle
+## Layout
 
-`scripts/start.sh` brings up the atlas bridge (`python3 -m ranger_description.main`). The bridge opens a gRPC server, registers the cap on atlas, declares `primitive/tf/driver`, then blocks awaiting `Driver(CMD_INIT, config_json)`.
-
-When `rbnx boot` calls Init, the handler spawns `ros2 launch <pkg>/launch/static_tf.launch.xml` (with optional `launch_args` overrides forwarded as `<key>:=<value>`), waits a short grace window (`spawn_grace_s`, default 1.5 s) to make sure the launch process didn't crash, and returns `Ok()`.
-
-We do `spawn_launch + grace_check` inside **`on_init`** rather than `on_activate` because mapping / nav read these TFs during their own Init, and rbnx boot's strict-serial ordering means putting this package early in `primitive:` + doing the spawn in `on_init` is the cleanest way to guarantee the TFs are live before downstream Inits run.
-
-## Build phase
-
-`scripts/build.sh` calls `rbnx codegen` only — no native compilation, no vendored ROS package source. The only "artifact" this package ships is `launch/static_tf.launch.xml`, which is consumed at runtime by `ros2 launch` and needs no compilation step.
-
-## Config (passed via `Driver(CMD_INIT, config_json)`)
-
-```yaml
-primitive:
-  - name: ranger_description
-    url: https://github.com/lhw2002426/ranger_description_rbnx
-    branch: main
-    config:
-      # Optional: pick a different launch file shipped in this package.
-      # Relative paths resolve against the package root; absolute paths
-      # are also accepted.
-      # launch_file: launch/static_tf.launch.xml
-
-      # Optional: per-axis overrides for the mount offsets baked into
-      # static_tf.launch.xml. The defaults are placeholders derived
-      # from CAD — measure your actual robot and override these
-      # before relying on the TF tree for SLAM / nav.
-      launch_args:
-        lidar_x:  "0.18"
-        lidar_y:  "0.00"
-        lidar_z:  "0.425"
-        camera_x: "0.28"
-        camera_y: "0.00"
-        camera_z: "0.30"
-
-      # spawn_grace_s: 1.5
+```
+ranger_description_rbnx/
+├── package_manifest.yaml        capabilities: [] (intentional)
+├── launch/
+│   └── static_tf.launch.xml     two static_transform_publisher nodes
+└── scripts/
+    ├── build.sh                 no-op (writes .rbnx-built stamp)
+    └── start.sh                 exec ros2 launch …/static_tf.launch.xml
 ```
 
-## Standalone testing (no rbnx)
+## Configuration — edit the launch file directly
 
-```bash
-ros2 launch ranger_description_rbnx/launch/static_tf.launch.xml
-```
+The mount-offset defaults baked into `launch/static_tf.launch.xml` are placeholders derived from CAD. To override per-axis you can either:
 
-Override mount offsets without editing the file:
+1. **Edit `launch/static_tf.launch.xml`** (default values in the `<arg ...>` tags) and re-push, or
+2. **Pass `<key>:=<value>` args from the command line** when running standalone (the `<arg>` defaults exist exactly for this):
 
 ```bash
 ros2 launch ranger_description_rbnx/launch/static_tf.launch.xml \
     lidar_x:=0.18 lidar_z:=0.42 \
     camera_x:=0.28 camera_z:=0.30
+```
+
+There is no manifest-side `launch_args` block anymore — that path required a Python wrapper to convert YAML config → ros2 launch args, which we don't ship. If a deploy needs different defaults, fork this package or just patch the launch file in-tree.
+
+## Standalone testing (without rbnx boot)
+
+```bash
+ros2 launch ranger_description_rbnx/launch/static_tf.launch.xml
+```
+
+Verify with:
+
+```bash
+ros2 run tf2_ros tf2_echo base_link livox_frame
+ros2 run tf2_ros tf2_echo base_link camera_435i_link
 ```
 
 Mis-calibrated TF is the single most common reason rtabmap "thinks the robot is jumping around" or nav goals land 30 cm off — measure the actual mount before trusting the defaults.
